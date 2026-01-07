@@ -232,7 +232,7 @@ export default function QuizPage() {
 
   const correctSet = useMemo(() => new Set(q?.correctIndices ?? []), [q]);
 
-  function toggleOption(i: number) {
+  async function toggleOption(i: number) {
     if (!q) return;
     if (revealed) return;
     if (!attemptedLoaded) {
@@ -243,9 +243,38 @@ export default function QuizPage() {
       setToast({ type: "info", message: "Already attempted" });
       return;
     }
+    if (!user) {
+      setToast({ type: "error", message: "Please login again" });
+      return;
+    }
+    if (loggedIds[q.id]) return;
 
     setSelected([i]);
     setRevealed(true);
+
+    const pickedCorrect = correctSet.has(i);
+    try {
+      setBusy(true);
+      await recordAttemptAndUpdateStats({
+        userId: user.id,
+        questionId: q.id,
+        subject: q.subject,
+        selectedIndices: [i],
+        isCorrect: pickedCorrect,
+      });
+      setLoggedIds((prev) => ({ ...prev, [q.id]: true }));
+      setAttemptedIds((prev) => ({ ...prev, [q.id]: true }));
+
+      const rows = await fetchUserSubjectStats(user.id);
+      const r = rows.find((x) => x.subject === dbSubject);
+      const attempted = Number(r?.total ?? 0);
+      const marks = Number(r?.marks ?? 0);
+      setSubjectMarks({ attempted, marks });
+    } catch (e: unknown) {
+      setToast({ type: "error", message: errorMessage(e) });
+    } finally {
+      setBusy(false);
+    }
   }
 
   const isCorrect = useMemo(() => {
@@ -268,33 +297,6 @@ export default function QuizPage() {
     }, 1000);
     return () => window.clearInterval(id);
   }, [timerRunning]);
-
-  useEffect(() => {
-    if (!user || !q) return;
-    if (!revealed) return;
-    if (loggedIds[q.id]) return;
-    void (async () => {
-      try {
-        await recordAttemptAndUpdateStats({
-          userId: user.id,
-          questionId: q.id,
-          subject: q.subject,
-          selectedIndices: selected,
-          isCorrect,
-        });
-        setLoggedIds((prev) => ({ ...prev, [q.id]: true }));
-        setAttemptedIds((prev) => ({ ...prev, [q.id]: true }));
-
-        const rows = await fetchUserSubjectStats(user.id);
-        const r = rows.find((x) => x.subject === dbSubject);
-        const attempted = Number(r?.total ?? 0);
-        const marks = Number(r?.marks ?? 0);
-        setSubjectMarks({ attempted, marks });
-      } catch (e: unknown) {
-        setToast({ type: "error", message: errorMessage(e) });
-      }
-    })();
-  }, [user, q, revealed, isCorrect, loggedIds, selected, dbSubject]);
 
   useEffect(() => {
     setDurationSec(20 * 60);
@@ -358,8 +360,7 @@ export default function QuizPage() {
     return () => {
       cancelled = true;
     };
-    // intentionally depend on questions so we can jump once list is loaded
-  }, [user, subject, questions]);
+  }, [user, subject]);
 
   useEffect(() => {
     if (!user) return;
