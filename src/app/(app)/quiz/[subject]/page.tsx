@@ -151,7 +151,13 @@ export default function QuizPage() {
     }
   }, [pendingNext, index, nextUnattemptedIndex, hasMore, loading]);
 
-  const desiredQid = useMemo(() => targetQid ?? resumeQid, [targetQid, resumeQid]);
+  const desiredQid = useMemo(() => {
+    if (targetQid) return targetQid;
+    if (!resumeQid) return null;
+    if (!attemptedLoaded) return null;
+    if (attemptedIds[resumeQid]) return null;
+    return resumeQid;
+  }, [targetQid, resumeQid, attemptedLoaded, attemptedIds]);
 
   useEffect(() => {
     if (!user) return;
@@ -557,7 +563,7 @@ export default function QuizPage() {
             {subject}
           </h1>
           <div className="mt-1 text-sm text-[var(--muted-fg)]">
-            Question {index + 1} / {subjectTotal ? subjectTotal.toLocaleString() : Math.max(questions.length, index + 1)}
+            Viewing {index + 1} / {subjectTotal ? subjectTotal.toLocaleString() : Math.max(questions.length, index + 1)}
           </div>
           <div className="mt-1 text-sm text-[var(--muted-fg)]">
             Loaded {questions.length.toLocaleString()}

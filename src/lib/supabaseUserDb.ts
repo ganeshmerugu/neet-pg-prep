@@ -21,6 +21,64 @@ function errorToMessage(e: unknown, fallback: string) {
   return fallback;
 }
 
+export async function recomputeSubjectStatsFromAttempts(userId: string, subject: string): Promise<{
+  attempted: number;
+  correct: number;
+  wrong: number;
+  marks: number;
+}> {
+  const supabase = requireSupabase();
+
+  const pageSize = 1000;
+  let from = 0;
+
+  let attempted = 0;
+  let correct = 0;
+  let wrong = 0;
+  let marks = 0;
+
+  // We compute from attempts table as the source of truth to avoid drift.
+  // Pagination keeps this safe even if a subject has many attempts.
+  for (;;) {
+    const { data, error } = await (supabase as any)
+      .from("user_question_attempts")
+      .select("is_correct, marks_delta")
+      .eq("user_id", userId)
+      .eq("subject", subject)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw new Error(error.message);
+
+    const rows = (data ?? []) as Array<{ is_correct?: unknown; marks_delta?: unknown }>;
+    for (const r of rows) {
+      attempted += 1;
+      const ok = Boolean(r.is_correct);
+      if (ok) correct += 1;
+      else wrong += 1;
+      marks += Number(r.marks_delta ?? 0);
+    }
+
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+
+  const { error: upsertErr } = await (supabase as any).from("user_subject_stats").upsert(
+    {
+      user_id: userId,
+      subject,
+      attempted,
+      correct,
+      wrong,
+      marks,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id,subject" },
+  );
+  if (upsertErr) throw new Error(upsertErr.message);
+
+  return { attempted, correct, wrong, marks };
+}
+
 export async function fetchUserSubjectStats(userId: string): Promise<SubjectStat[]> {
   const supabase = requireSupabase();
   const { data, error } = await (supabase as any)
@@ -170,39 +228,7 @@ export async function recordAttemptAndUpdateStats(opts: {
 
   if (insError) throw new Error(insError.message);
 
-  const { data: statRow, error: statErr } = await (supabase as any)
-    .from("user_subject_stats")
-    .select("attempted, correct, wrong, marks")
-    .eq("user_id", opts.userId)
-    .eq("subject", opts.subject)
-    .maybeSingle();
-
-  if (statErr) throw new Error(statErr.message);
-
-  const prevAttempted = Number((statRow as any)?.attempted ?? 0);
-  const prevCorrect = Number((statRow as any)?.correct ?? 0);
-  const prevWrong = Number((statRow as any)?.wrong ?? 0);
-  const prevMarks = Number((statRow as any)?.marks ?? 0);
-
-  const nextAttempted = prevAttempted + 1;
-  const nextCorrect = prevCorrect + (opts.isCorrect ? 1 : 0);
-  const nextWrong = prevWrong + (opts.isCorrect ? 0 : 1);
-  const nextMarks = prevMarks + marksDelta;
-
-  const { error: upsertErr } = await (supabase as any).from("user_subject_stats").upsert(
-    {
-      user_id: opts.userId,
-      subject: opts.subject,
-      attempted: nextAttempted,
-      correct: nextCorrect,
-      wrong: nextWrong,
-      marks: nextMarks,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id,subject" },
-  );
-
-  if (upsertErr) throw new Error(upsertErr.message);
+  await recomputeSubjectStatsFromAttempts(opts.userId, opts.subject);
 }
 
 export async function fetchQuizState(userId: string, subject: string): Promise<{
