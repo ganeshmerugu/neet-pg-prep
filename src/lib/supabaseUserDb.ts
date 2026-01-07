@@ -152,18 +152,8 @@ export async function recordAttemptAndUpdateStats(opts: {
   if (existingError) throw new Error(existingError.message);
 
   if (existing) {
-    const { error: updError } = await (supabase as any)
-      .from("user_question_attempts")
-      .update({
-        selected_indices: opts.selectedIndices,
-        is_correct: opts.isCorrect,
-        marks_delta: marksDelta,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("user_id", opts.userId)
-      .eq("question_id", opts.questionId);
-
-    if (updError) throw new Error(updError.message);
+    // This app treats attempts as immutable: once attempted, do not change stats/marks.
+    // This also prevents double-clicks from re-writing attempts.
     return;
   }
 

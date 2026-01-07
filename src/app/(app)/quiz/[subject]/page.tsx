@@ -235,6 +235,7 @@ export default function QuizPage() {
   async function toggleOption(i: number) {
     if (!q) return;
     if (revealed) return;
+    if (busy) return;
     if (!attemptedLoaded) {
       setToast({ type: "info", message: "Loading progress..." });
       return;
@@ -249,12 +250,13 @@ export default function QuizPage() {
     }
     if (loggedIds[q.id]) return;
 
+    setBusy(true);
+
     setSelected([i]);
     setRevealed(true);
 
     const pickedCorrect = correctSet.has(i);
     try {
-      setBusy(true);
       await recordAttemptAndUpdateStats({
         userId: user.id,
         questionId: q.id,
@@ -637,6 +639,7 @@ export default function QuizPage() {
                 key={i}
                 type="button"
                 onClick={() => toggleOption(i)}
+                disabled={busy || revealed || !attemptedLoaded || (q?.id ? Boolean(attemptedIds[q.id]) : false)}
                 className={`flex w-full items-start gap-3 rounded-2xl border ${border} ${bg} px-4 py-3 text-left transition hover:-translate-y-[1px] hover:bg-[var(--soft-bg)] focus:outline-none focus:ring-4 focus:ring-[var(--ring)]`}
               >
                 <div className="grid size-7 shrink-0 place-items-center rounded-lg bg-[var(--accent)] text-xs font-semibold text-white">
@@ -677,7 +680,7 @@ export default function QuizPage() {
           <button
             type="button"
             onClick={onNext}
-            disabled={busy}
+            disabled={busy || loading}
             className="inline-flex h-11 flex-1 items-center justify-center rounded-xl border border-[color:var(--card-border)] bg-[var(--card-bg)] px-5 text-sm font-semibold text-[var(--app-fg)] shadow-sm hover:bg-[var(--soft-bg)] focus:outline-none focus:ring-4 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy ? "Saving..." : "Next Question"}
