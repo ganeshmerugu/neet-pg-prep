@@ -10,6 +10,7 @@ import {
   fetchQuizState,
   fetchUserSubjectStats,
   isBookmarked,
+  recomputeSubjectStatsFromAttempts,
   recordAttemptAndUpdateStats,
   resetSubjectProgress,
   saveBookmark,
@@ -335,7 +336,14 @@ export default function QuizPage() {
       }
     };
 
-    void refresh();
+    void (async () => {
+      try {
+        await recomputeSubjectStatsFromAttempts(user.id, dbSubject);
+      } catch {
+        // ignore; we can still show whatever stats are available
+      }
+      void refresh();
+    })();
     const ch = subscribeUserSubjectStats(user.id, () => void refresh());
     return () => {
       cancelled = true;
