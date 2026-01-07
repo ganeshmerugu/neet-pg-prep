@@ -79,7 +79,9 @@ export default function QuizPage() {
   });
 
   const [attemptedIds, setAttemptedIds] = useState<Record<string, true>>({});
+  const [localAttemptedIds, setLocalAttemptedIds] = useState<Record<string, true>>({});
   const [attemptedLoaded, setAttemptedLoaded] = useState(false);
+  const [attemptedEpoch, setAttemptedEpoch] = useState(0);
 
   const q = questions[index];
   const isAttempted = Boolean(q?.id && attemptedIds[q.id]);
@@ -120,7 +122,9 @@ export default function QuizPage() {
     setResumeQid(null);
     setHydrated(false);
     setAttemptedIds({});
+    setLocalAttemptedIds({});
     setAttemptedLoaded(false);
+    setAttemptedEpoch((v) => v + 1);
     setPendingNext(false);
     setInitialStartDone(false);
   }, [subject]);
@@ -159,7 +163,7 @@ export default function QuizPage() {
         if (cancelled) return;
         const next: Record<string, true> = {};
         for (const id of set) next[id] = true;
-        setAttemptedIds((prev) => ({ ...prev, ...next }));
+        setAttemptedIds({ ...next, ...localAttemptedIds });
         setAttemptedLoaded(true);
       } catch (e: unknown) {
         if (cancelled) return;
@@ -170,7 +174,7 @@ export default function QuizPage() {
     return () => {
       cancelled = true;
     };
-  }, [user, questions]);
+  }, [user, questions, attemptedEpoch, localAttemptedIds]);
 
   useEffect(() => {
     if (!user) return;
@@ -265,6 +269,7 @@ export default function QuizPage() {
         isCorrect: pickedCorrect,
       });
       setLoggedIds((prev) => ({ ...prev, [q.id]: true }));
+      setLocalAttemptedIds((prev) => ({ ...prev, [q.id]: true }));
       setAttemptedIds((prev) => ({ ...prev, [q.id]: true }));
 
       const rows = await fetchUserSubjectStats(user.id);
@@ -435,6 +440,10 @@ export default function QuizPage() {
       setLoggedIds({});
       setSubjectMarks({ attempted: 0, marks: 0 });
       setAttemptedIds({});
+      setLocalAttemptedIds({});
+      setAttemptedLoaded(false);
+      setAttemptedEpoch((v) => v + 1);
+      setInitialStartDone(false);
 
       setTimerRunning(false);
       setDurationSec(20 * 60);
