@@ -7,6 +7,7 @@ import type { Question } from "@/lib/types";
 import { useAuth } from "@/components/auth/AuthProvider";
 import {
   fetchAttemptedQuestionIds,
+  fetchAttemptDetails,
   fetchQuizState,
   fetchUserSubjectStats,
   isBookmarked,
@@ -83,6 +84,9 @@ export default function QuizPage() {
   const [localAttemptedIds, setLocalAttemptedIds] = useState<Record<string, true>>({});
   const [attemptedLoaded, setAttemptedLoaded] = useState(false);
   const [attemptedEpoch, setAttemptedEpoch] = useState(0);
+  const [attemptDetails, setAttemptDetails] = useState<
+    Record<string, { selectedIndices: number[]; isCorrect: boolean }>
+  >({});
 
   const q = questions[index];
   const isAttempted = Boolean(q?.id && attemptedIds[q.id]);
@@ -124,6 +128,7 @@ export default function QuizPage() {
     setHydrated(false);
     setAttemptedIds({});
     setLocalAttemptedIds({});
+    setAttemptDetails({});
     setAttemptedLoaded(false);
     setAttemptedEpoch((v) => v + 1);
     setPendingNext(false);
@@ -156,10 +161,8 @@ export default function QuizPage() {
   const desiredQid = useMemo(() => {
     if (targetQid) return targetQid;
     if (!resumeQid) return null;
-    if (!attemptedLoaded) return null;
-    if (attemptedIds[resumeQid]) return null;
     return resumeQid;
-  }, [targetQid, resumeQid, attemptedLoaded, attemptedIds]);
+  }, [targetQid, resumeQid]);
 
   useEffect(() => {
     if (!user) return;
@@ -172,6 +175,9 @@ export default function QuizPage() {
         const next: Record<string, true> = {};
         for (const id of set) next[id] = true;
         setAttemptedIds({ ...next, ...localAttemptedIds });
+        const details = await fetchAttemptDetails(user.id, ids);
+        if (cancelled) return;
+        setAttemptDetails((prev) => ({ ...prev, ...details }));
         setAttemptedLoaded(true);
       } catch (e: unknown) {
         if (cancelled) return;
@@ -183,6 +189,20 @@ export default function QuizPage() {
       cancelled = true;
     };
   }, [user, questions, attemptedEpoch, localAttemptedIds]);
+
+  useEffect(() => {
+    if (!q) return;
+    if (attemptedIds[q.id]) {
+      const detail = attemptDetails[q.id];
+      if (detail) {
+        setSelected(detail.selectedIndices);
+        setRevealed(true);
+      }
+      return;
+    }
+    setSelected([]);
+    setRevealed(false);
+  }, [q?.id, attemptedIds, attemptDetails]);
 
   useEffect(() => {
     if (!user) return;
@@ -279,6 +299,10 @@ export default function QuizPage() {
       setLoggedIds((prev) => ({ ...prev, [q.id]: true }));
       setLocalAttemptedIds((prev) => ({ ...prev, [q.id]: true }));
       setAttemptedIds((prev) => ({ ...prev, [q.id]: true }));
+      setAttemptDetails((prev) => ({
+        ...prev,
+        [q.id]: { selectedIndices: [i], isCorrect: pickedCorrect },
+      }));
 
       const rows = await fetchUserSubjectStats(user.id);
       const r = rows.find((x) => x.subject === dbSubject);

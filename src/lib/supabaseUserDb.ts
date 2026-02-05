@@ -21,6 +21,36 @@ function errorToMessage(e: unknown, fallback: string) {
   return fallback;
 }
 
+function subjectAliases(subject: string): string[] {
+  if (subject === "Orthopaedics") return [subject, "Orthopedics"];
+  if (subject === "Skin") return [subject, "Dermatology"];
+  return [subject];
+}
+
+async function fetchQuestionIdsBySubjects(subjects: string[]): Promise<string[]> {
+  const supabase = requireSupabase();
+  const out: string[] = [];
+  const pageSize = 1000;
+  let from = 0;
+
+  for (;;) {
+    const { data, error } = await (supabase as any)
+      .from("questions")
+      .select("id")
+      .in("subject", subjects)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as Array<{ id?: unknown }>;
+    for (const r of rows) {
+      if (r.id != null) out.push(String(r.id));
+    }
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return out;
+}
+
 export async function recomputeSubjectStatsFromAttempts(userId: string, subject: string): Promise<{
   attempted: number;
   correct: number;
@@ -281,26 +311,42 @@ export async function upsertQuizState(opts: {
 
 export async function resetSubjectProgress(userId: string, subject: string) {
   const supabase = requireSupabase();
+  const subjects = subjectAliases(subject);
+
+  const questionIds = await fetchQuestionIdsBySubjects(subjects);
+
+  if (questionIds.length > 0) {
+    const chunkSize = 1000;
+    for (let i = 0; i < questionIds.length; i += chunkSize) {
+      const chunk = questionIds.slice(i, i + chunkSize);
+      const { error: attemptsByIdErr } = await (supabase as any)
+        .from("user_question_attempts")
+        .delete()
+        .eq("user_id", userId)
+        .in("question_id", chunk);
+      if (attemptsByIdErr) throw new Error(attemptsByIdErr.message);
+    }
+  }
 
   const { error: attemptsErr } = await (supabase as any)
     .from("user_question_attempts")
     .delete()
     .eq("user_id", userId)
-    .eq("subject", subject);
+    .in("subject", subjects);
   if (attemptsErr) throw new Error(attemptsErr.message);
 
   const { error: statsErr } = await (supabase as any)
     .from("user_subject_stats")
     .delete()
     .eq("user_id", userId)
-    .eq("subject", subject);
+    .in("subject", subjects);
   if (statsErr) throw new Error(statsErr.message);
 
   const { error: stateErr } = await (supabase as any)
     .from("user_quiz_state")
     .delete()
     .eq("user_id", userId)
-    .eq("subject", subject);
+    .in("subject", subjects);
   if (stateErr) throw new Error(stateErr.message);
 }
 
@@ -320,6 +366,37 @@ export async function fetchAttemptedQuestionIds(userId: string, questionIds: str
   const out = new Set<string>();
   for (const r of rows) {
     if (r.question_id != null) out.add(String(r.question_id));
+  }
+  return out;
+}
+
+export async function fetchAttemptDetails(
+  userId: string,
+  questionIds: string[],
+): Promise<Record<string, { selectedIndices: number[]; isCorrect: boolean }>> {
+  if (questionIds.length === 0) return {};
+  const supabase = requireSupabase();
+  const { data, error } = await (supabase as any)
+    .from("user_question_attempts")
+    .select("question_id, selected_indices, is_correct")
+    .eq("user_id", userId)
+    .in("question_id", questionIds);
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as Array<{
+    question_id?: unknown;
+    selected_indices?: unknown;
+    is_correct?: unknown;
+  }>;
+
+  const out: Record<string, { selectedIndices: number[]; isCorrect: boolean }> = {};
+  for (const r of rows) {
+    if (r.question_id == null) continue;
+    const id = String(r.question_id);
+    const selected = Array.isArray(r.selected_indices)
+      ? (r.selected_indices as number[]).map((v) => Number(v))
+      : [];
+    out[id] = { selectedIndices: selected, isCorrect: Boolean(r.is_correct) };
   }
   return out;
 }
