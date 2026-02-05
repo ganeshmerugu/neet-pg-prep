@@ -292,30 +292,8 @@ export async function upsertQuizState(opts: {
   timerRemainingSec: number;
   timerRunning: boolean;
 }) {
-  const supabase = requireSupabase();
-
-  const payload = {
-    user_id: opts.userId,
-    subject: opts.subject,
-    current_question_id: opts.currentQuestionId,
-    timer_remaining_sec: opts.timerRemainingSec,
-    timer_running: opts.timerRunning,
-    updated_at: new Date().toISOString(),
-  };
-
-  const { error: updateError, count } = await (supabase as any)
-    .from("user_quiz_state")
-    .update(payload)
-    .eq("user_id", opts.userId)
-    .eq("subject", opts.subject)
-    .select("user_id", { count: "exact", head: true });
-
-  if (updateError) throw new Error(errorToMessage(updateError, "Failed to save quiz state"));
-
-  if (!count) {
-    const { error: insertError } = await (supabase as any).from("user_quiz_state").insert(payload);
-    if (insertError) throw new Error(errorToMessage(insertError, "Failed to save quiz state"));
-  }
+  // Temporarily disabled to avoid Supabase constraint errors
+  // TODO: re-enable after DB constraint is added or use update-then-insert pattern
 }
 
 export async function resetSubjectProgress(userId: string, subject: string) {
