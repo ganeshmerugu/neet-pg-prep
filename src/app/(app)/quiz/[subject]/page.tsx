@@ -53,7 +53,7 @@ export default function QuizPage() {
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
 
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(-1);
   const [selected, setSelected] = useState<number[]>([]);
   const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -128,6 +128,7 @@ export default function QuizPage() {
     setAttemptedEpoch((v) => v + 1);
     setPendingNext(false);
     setInitialStartDone(false);
+    setIndex(-1);
   }, [subject]);
 
   useEffect(() => {
@@ -191,13 +192,13 @@ export default function QuizPage() {
     if (questions.length === 0) return;
     if (!attemptedLoaded) return;
     const first = questions.findIndex((qq) => !attemptedIds[qq.id]);
-    if (first >= 0 && first !== index) {
+    if (first >= 0) {
       setIndex(first);
       setSelected([]);
       setRevealed(false);
     }
     setInitialStartDone(true);
-  }, [user, hydrated, initialStartDone, desiredQid, questions, attemptedIds, attemptedLoaded, index]);
+  }, [user, hydrated, initialStartDone, desiredQid, questions, attemptedIds, attemptedLoaded]);
 
   useEffect(() => {
     if (!desiredQid) return;
@@ -221,7 +222,7 @@ export default function QuizPage() {
     setQuestions([]);
     setOffset(0);
     setHasMore(true);
-    setIndex(0);
+    setIndex(-1);
     setSelected([]);
     setRevealed(false);
 
@@ -448,7 +449,7 @@ export default function QuizPage() {
 
     try {
       await resetSubjectProgress(user.id, dbSubject);
-      setIndex(0);
+      setIndex(-1);
       setSelected([]);
       setRevealed(false);
       setLoggedIds({});
@@ -533,6 +534,16 @@ export default function QuizPage() {
       <div className="grid min-h-[60vh] place-items-center">
         <div className="rounded-2xl border border-[color:var(--card-border)] bg-[var(--card-bg)] px-6 py-5 text-sm text-[var(--muted-fg)] shadow-[var(--shadow)]">
           Loading questions...
+        </div>
+      </div>
+    );
+  }
+
+  if (index < 0) {
+    return (
+      <div className="grid min-h-[60vh] place-items-center">
+        <div className="rounded-2xl border border-[color:var(--card-border)] bg-[var(--card-bg)] px-6 py-5 text-sm text-[var(--muted-fg)] shadow-[var(--shadow)]">
+          Preparing your quiz...
         </div>
       </div>
     );
