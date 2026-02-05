@@ -473,6 +473,9 @@ export default function QuizPage() {
 
     try {
       await resetSubjectProgress(user.id, dbSubject);
+      setJumpedToQid(null);
+      setResumeQid(null);
+      setHydrated(false);
       setIndex(-1);
       setSelected([]);
       setRevealed(false);
@@ -480,9 +483,21 @@ export default function QuizPage() {
       setSubjectMarks({ attempted: 0, marks: 0 });
       setAttemptedIds({});
       setLocalAttemptedIds({});
+      setAttemptDetails({});
       setAttemptedLoaded(false);
       setAttemptedEpoch((v) => v + 1);
       setInitialStartDone(false);
+
+      try {
+        await recomputeSubjectStatsFromAttempts(user.id, dbSubject);
+        const rows = await fetchUserSubjectStats(user.id);
+        const r = rows.find((x) => x.subject === dbSubject);
+        const attempted = Number(r?.total ?? 0);
+        const marks = Number(r?.marks ?? 0);
+        setSubjectMarks({ attempted, marks });
+      } catch {
+        setSubjectMarks({ attempted: 0, marks: 0 });
+      }
 
       setTimerRunning(false);
       setDurationSec(20 * 60);
