@@ -272,7 +272,7 @@ export default function QuizPage() {
       await recordAttemptAndUpdateStats({
         userId: user.id,
         questionId: q.id,
-        subject: q.subject,
+        subject: dbSubject,
         selectedIndices: [i],
         isCorrect: pickedCorrect,
       });
@@ -506,7 +506,7 @@ export default function QuizPage() {
         setToast({ type: "info", message: "Already bookmarked" });
         return;
       }
-      await saveBookmark(user.id, q.id, q.subject);
+      await saveBookmark(user.id, q.id, dbSubject);
       setToast({ type: "info", message: "Bookmarked" });
     } catch (e: unknown) {
       setToast({ type: "error", message: errorMessage(e) });
