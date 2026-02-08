@@ -33,7 +33,7 @@ async function fetchQuestionIdsBySubjects(subjects: string[]): Promise<string[]>
   const pageSize = 1000;
   let from = 0;
 
-  for (;;) {
+  for (; ;) {
     const { data, error } = await (supabase as any)
       .from("questions")
       .select("id")
@@ -69,7 +69,7 @@ export async function recomputeSubjectStatsFromAttempts(userId: string, subject:
 
   // We compute from attempts table as the source of truth to avoid drift.
   // Pagination keeps this safe even if a subject has many attempts.
-  for (;;) {
+  for (; ;) {
     const { data, error } = await (supabase as any)
       .from("user_question_attempts")
       .select("is_correct, marks_delta")
@@ -292,8 +292,46 @@ export async function upsertQuizState(opts: {
   timerRemainingSec: number;
   timerRunning: boolean;
 }) {
-  // Temporarily disabled to avoid Supabase constraint errors
-  // TODO: re-enable after DB constraint is added or use update-then-insert pattern
+  const supabase = requireSupabase();
+
+  // Try to find existing state
+  const { data: existing, error: fetchErr } = await (supabase as any)
+    .from("user_quiz_state")
+    .select("id")
+    .eq("user_id", opts.userId)
+    .eq("subject", opts.subject)
+    .maybeSingle();
+
+  if (fetchErr) throw new Error(fetchErr.message);
+
+  if (existing) {
+    // Update existing
+    const { error: updateErr } = await (supabase as any)
+      .from("user_quiz_state")
+      .update({
+        current_question_id: opts.currentQuestionId,
+        timer_remaining_sec: opts.timerRemainingSec,
+        timer_running: opts.timerRunning,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
+
+    if (updateErr) throw new Error(updateErr.message);
+  } else {
+    // Insert new
+    const { error: insertErr } = await (supabase as any)
+      .from("user_quiz_state")
+      .insert({
+        user_id: opts.userId,
+        subject: opts.subject,
+        current_question_id: opts.currentQuestionId,
+        timer_remaining_sec: opts.timerRemainingSec,
+        timer_running: opts.timerRunning,
+        updated_at: new Date().toISOString(),
+      });
+
+    if (insertErr) throw new Error(insertErr.message);
+  }
 }
 
 export async function resetSubjectProgress(userId: string, subject: string) {
@@ -341,19 +379,25 @@ export async function fetchAttemptedQuestionIds(userId: string, questionIds: str
   if (questionIds.length === 0) return new Set();
   const supabase = requireSupabase();
 
-  const { data, error } = await (supabase as any)
-    .from("user_question_attempts")
-    .select("question_id")
-    .eq("user_id", userId)
-    .in("question_id", questionIds);
-
-  if (error) throw new Error(error.message);
-
-  const rows = (data ?? []) as Array<{ question_id?: unknown }>;
+  const chunkSize = 200;
   const out = new Set<string>();
-  for (const r of rows) {
-    if (r.question_id != null) out.add(String(r.question_id));
+
+  for (let i = 0; i < questionIds.length; i += chunkSize) {
+    const chunk = questionIds.slice(i, i + chunkSize);
+    const { data, error } = await (supabase as any)
+      .from("user_question_attempts")
+      .select("question_id")
+      .eq("user_id", userId)
+      .in("question_id", chunk);
+
+    if (error) throw new Error(error.message);
+
+    const rows = (data ?? []) as Array<{ question_id?: unknown }>;
+    for (const r of rows) {
+      if (r.question_id != null) out.add(String(r.question_id));
+    }
   }
+
   return out;
 }
 
@@ -363,27 +407,35 @@ export async function fetchAttemptDetails(
 ): Promise<Record<string, { selectedIndices: number[]; isCorrect: boolean }>> {
   if (questionIds.length === 0) return {};
   const supabase = requireSupabase();
-  const { data, error } = await (supabase as any)
-    .from("user_question_attempts")
-    .select("question_id, selected_indices, is_correct")
-    .eq("user_id", userId)
-    .in("question_id", questionIds);
-  if (error) throw new Error(error.message);
 
-  const rows = (data ?? []) as Array<{
-    question_id?: unknown;
-    selected_indices?: unknown;
-    is_correct?: unknown;
-  }>;
-
+  const chunkSize = 200;
   const out: Record<string, { selectedIndices: number[]; isCorrect: boolean }> = {};
-  for (const r of rows) {
-    if (r.question_id == null) continue;
-    const id = String(r.question_id);
-    const selected = Array.isArray(r.selected_indices)
-      ? (r.selected_indices as number[]).map((v) => Number(v))
-      : [];
-    out[id] = { selectedIndices: selected, isCorrect: Boolean(r.is_correct) };
+
+  for (let i = 0; i < questionIds.length; i += chunkSize) {
+    const chunk = questionIds.slice(i, i + chunkSize);
+    const { data, error } = await (supabase as any)
+      .from("user_question_attempts")
+      .select("question_id, selected_indices, is_correct")
+      .eq("user_id", userId)
+      .in("question_id", chunk);
+
+    if (error) throw new Error(error.message);
+
+    const rows = (data ?? []) as Array<{
+      question_id?: unknown;
+      selected_indices?: unknown;
+      is_correct?: unknown;
+    }>;
+
+    for (const r of rows) {
+      if (r.question_id == null) continue;
+      const id = String(r.question_id);
+      const selected = Array.isArray(r.selected_indices)
+        ? (r.selected_indices as number[]).map((v) => Number(v))
+        : [];
+      out[id] = { selectedIndices: selected, isCorrect: Boolean(r.is_correct) };
+    }
   }
+
   return out;
 }

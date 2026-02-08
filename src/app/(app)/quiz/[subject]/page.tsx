@@ -192,14 +192,22 @@ export default function QuizPage() {
 
   useEffect(() => {
     if (!q) return;
+
+    // If it's supposedly attempted, check if we have details loaded
     if (attemptedIds[q.id]) {
       const detail = attemptDetails[q.id];
       if (detail) {
         setSelected(detail.selectedIndices);
         setRevealed(true);
+        return;
       }
-      return;
+      // If we know it's attempted but don't have details yet, 
+      // we should probably wait or show a loading state. 
+      // For now, let's fall through to clear state so we don't show stale info
+      // from the previous question.
     }
+
+    // Default: clear everything
     setSelected([]);
     setRevealed(false);
   }, [q?.id, attemptedIds, attemptDetails]);
@@ -216,9 +224,20 @@ export default function QuizPage() {
       setIndex(first);
       setSelected([]);
       setRevealed(false);
+    } else {
+      // No unattempted questions in the initial batch
+      if (hasMore) {
+        setPendingNext(true);
+      } else {
+        // All loaded questions attempted and no more on server
+        setIndex(0);
+        setSelected([]);
+        setRevealed(false);
+        setToast({ type: "info", message: "All questions attempted" });
+      }
     }
     setInitialStartDone(true);
-  }, [user, hydrated, initialStartDone, desiredQid, questions, attemptedIds, attemptedLoaded]);
+  }, [user, hydrated, initialStartDone, desiredQid, questions, attemptedIds, attemptedLoaded, hasMore]);
 
   useEffect(() => {
     if (!desiredQid) return;
@@ -731,9 +750,8 @@ export default function QuizPage() {
               {q.explanation}
             </div>
             <div
-              className={`mt-3 inline-flex rounded-xl px-3 py-1 text-xs font-semibold ${
-                isCorrect ? "bg-emerald-500/15 text-emerald-200" : "bg-rose-500/15 text-rose-200"
-              }`}
+              className={`mt-3 inline-flex rounded-xl px-3 py-1 text-xs font-semibold ${isCorrect ? "bg-emerald-500/15 text-emerald-200" : "bg-rose-500/15 text-rose-200"
+                }`}
             >
               {isCorrect ? "Correct" : "Incorrect"}
             </div>
