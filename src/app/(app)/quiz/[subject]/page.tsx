@@ -13,6 +13,7 @@ import {
   isBookmarked,
   recomputeSubjectStatsFromAttempts,
   recordAttemptAndUpdateStats,
+  removeBookmark,
   resetSubjectProgress,
   saveBookmark,
   subscribeUserSubjectStats,
@@ -63,6 +64,9 @@ export default function QuizPage() {
   const [bookmarkBusy, setBookmarkBusy] = useState(false);
   const [pendingNext, setPendingNext] = useState(false);
   const [initialStartDone, setInitialStartDone] = useState(false);
+
+  const [baseOffset, setBaseOffset] = useState(0);
+  const [jumpInput, setJumpInput] = useState("");
 
   const targetQid = searchParams.get("qid");
   const [jumpedToQid, setJumpedToQid] = useState<string | null>(null);
@@ -133,7 +137,10 @@ export default function QuizPage() {
     setAttemptedEpoch((v) => v + 1);
     setPendingNext(false);
     setInitialStartDone(false);
+    setInitialStartDone(false);
     setIndex(-1);
+    setBaseOffset(0);
+    setJumpInput("");
   }, [subject]);
 
   useEffect(() => {
@@ -259,7 +266,9 @@ export default function QuizPage() {
 
   useEffect(() => {
     setQuestions([]);
+    setQuestions([]);
     setOffset(0);
+    setBaseOffset(0);
     setHasMore(true);
     setIndex(-1);
     setSelected([]);
@@ -505,7 +514,9 @@ export default function QuizPage() {
       setAttemptDetails({});
       setAttemptedLoaded(false);
       setAttemptedEpoch((v) => v + 1);
+      setAttemptedEpoch((v) => v + 1);
       setInitialStartDone(false);
+      setBaseOffset(0);
 
       try {
         await recomputeSubjectStatsFromAttempts(user.id, dbSubject);
@@ -530,9 +541,9 @@ export default function QuizPage() {
     if (!q) return;
     if (busy || loading) return;
 
-    const nextUnattempted = nextUnattemptedIndex(index);
-    if (nextUnattempted >= 0) {
-      setIndex(nextUnattempted);
+    // Standard Next: Go to next question index sequentially
+    if (index < questions.length - 1) {
+      setIndex((prev) => prev + 1);
       setSelected([]);
       setRevealed(false);
       return;
@@ -544,14 +555,47 @@ export default function QuizPage() {
       return;
     }
 
-    setToast({ type: "info", message: "No more unattempted questions" });
+    setToast({ type: "info", message: "End of questions" });
   }
 
   async function onPrev() {
-    if (index <= 0) return;
-    setIndex((prev) => Math.max(0, prev - 1));
-    setSelected([]);
-    setRevealed(false);
+    if (index > 0) {
+      setIndex((prev) => Math.max(0, prev - 1));
+      setSelected([]);
+      setRevealed(false);
+      return;
+    }
+
+    if (baseOffset > 0) {
+      if (loading) return;
+      setLoading(true);
+      try {
+        const fetchSize = 15;
+        const newBase = Math.max(0, baseOffset - fetchSize);
+        // We want to fetch the gap. 
+        // Example: baseOffset 50. fetchSize 15. newBase 35. Count 15.
+        // Example: baseOffset 10. fetchSize 15. newBase 0. Count 10.
+        const count = baseOffset - newBase;
+
+        // Note: fetchQuestionsPage takes pageSize. It attempts to fetch pageSize+1.
+        // We just need 'count' items.
+        // We pass pageSize: count. It will slice to 'count'.
+        const res = await fetchQuestionsPage({ subject, pageSize: count, offset: newBase });
+
+        // Prepend new questions
+        setQuestions((prev) => [...res.questions, ...prev]);
+        setBaseOffset(newBase);
+        // The new current question is the last one of the newly fetched batch
+        setIndex(res.questions.length - 1);
+
+        setSelected([]);
+        setRevealed(false);
+      } catch (e: unknown) {
+        setToast({ type: "error", message: errorMessage(e) });
+      } finally {
+        setLoading(false);
+      }
+    }
   }
 
   async function onBookmark() {
@@ -561,15 +605,87 @@ export default function QuizPage() {
     try {
       const already = await isBookmarked(user.id, q.id);
       if (already) {
-        setToast({ type: "info", message: "Already bookmarked" });
-        return;
+        await removeBookmark(user.id, q.id);
+        setToast({ type: "info", message: "Bookmark removed" });
+      } else {
+        await saveBookmark(user.id, q.id, dbSubject);
+        setToast({ type: "info", message: "Bookmarked" });
       }
-      await saveBookmark(user.id, q.id, dbSubject);
-      setToast({ type: "info", message: "Bookmarked" });
     } catch (e: unknown) {
       setToast({ type: "error", message: errorMessage(e) });
     } finally {
       setBookmarkBusy(false);
+    }
+  }
+
+  function onJumpToFirstUnattempted() {
+    // 1. Search locally
+    const firstLocal = questions.findIndex((qq) => !attemptedIds[qq.id]);
+    if (firstLocal >= 0) {
+      setIndex(firstLocal);
+      setSelected([]);
+      setRevealed(false);
+      return;
+    }
+
+    // 2. If not found locally, load more if available
+    if (hasMore) {
+      setToast({ type: "info", message: "Searching next batch..." });
+      // We set index to end so pendingNext logic searches forward from there (effectively loading more)
+      setIndex(questions.length - 1);
+      setPendingNext(true);
+    } else {
+      setToast({ type: "info", message: "All questions attempted" });
+    }
+  }
+
+  async function onGoToQuestion(e: React.FormEvent) {
+    e.preventDefault();
+    const target = parseInt(jumpInput);
+    if (isNaN(target) || target < 1) {
+      setToast({ type: "info", message: "Invalid question number" });
+      return;
+    }
+
+    if (subjectTotal && target > subjectTotal) {
+      setToast({ type: "error", message: `Max question is ${subjectTotal}` });
+      return;
+    }
+
+    // Check if target is in current loaded view
+    // Global index = baseOffset + localIndex + 1
+    // Local index = Target - 1 - baseOffset
+    const localIdx = target - 1 - baseOffset;
+
+    if (localIdx >= 0 && localIdx < questions.length) {
+      setIndex(localIdx);
+      setSelected([]);
+      setRevealed(false);
+      setJumpInput("");
+      return;
+    }
+
+    // Teleport: Load specific batch
+    const newBaseOffset = target - 1;
+    setLoading(true);
+    setQuestions([]);
+    setBaseOffset(newBaseOffset);
+    setIndex(0); // It will be the first in the new list
+    setRevealed(false);
+    setSelected([]);
+    setJumpInput("");
+
+    try {
+      // NOTE: fetchQuestionsPage takes 'offset' which is 0-indexed start from DB.
+      // So if we want Question 50, we start at offset 49.
+      const res = await fetchQuestionsPage({ subject, pageSize: 15, offset: newBaseOffset });
+      setQuestions(res.questions);
+      setOffset(res.nextOffset);
+      setHasMore(res.hasMore);
+    } catch (err: unknown) {
+      setToast({ type: "error", message: errorMessage(err) });
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -640,10 +756,11 @@ export default function QuizPage() {
             {subject}
           </h1>
           <div className="mt-1 text-sm text-[var(--muted-fg)]">
-            Viewing {index + 1} / {subjectTotal ? subjectTotal.toLocaleString() : Math.max(questions.length, index + 1)}
+            Viewing {baseOffset + index + 1} / {subjectTotal ? subjectTotal.toLocaleString() : "..."}
           </div>
           <div className="mt-1 text-sm text-[var(--muted-fg)]">
-            Loaded {questions.length.toLocaleString()}
+            Loaded {questions.length.toLocaleString()} items
+
             {subjectTotal ? ` / ${subjectTotal.toLocaleString()}` : ""}
             {hasMore ? " (more available)" : ""}
           </div>
@@ -654,11 +771,6 @@ export default function QuizPage() {
             <div className="rounded-xl border border-[color:var(--card-border)] bg-[var(--card-bg)] px-3 py-1.5 shadow-sm">
               Marks: <span className="font-semibold text-[var(--app-fg)]">{subjectMarks.marks.toLocaleString()}</span>
             </div>
-            {isAttempted ? (
-              <div className="rounded-xl border border-[color:var(--card-border)] bg-[var(--soft-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--muted-fg)] shadow-sm">
-                Attempted
-              </div>
-            ) : null}
             {typeof subjectScorePct === "number" ? (
               <div className="rounded-xl border border-[color:var(--card-border)] bg-[var(--card-bg)] px-3 py-1.5 shadow-sm">
                 Score: <span className="font-semibold text-[var(--app-fg)]">{scorePctText}</span>
@@ -678,6 +790,33 @@ export default function QuizPage() {
           >
             {timerRunning ? "Pause" : "Start"}
           </button>
+
+          <button
+            type="button"
+            onClick={onJumpToFirstUnattempted}
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-[color:var(--card-border)] bg-[var(--card-bg)] px-3 text-sm font-semibold text-[var(--app-fg)] shadow-sm transition active:scale-[0.98] hover:bg-[var(--soft-bg)] focus:outline-none focus:ring-4 focus:ring-[var(--ring)]"
+          >
+            First Next
+          </button>
+
+          <form onSubmit={onGoToQuestion} className="flex items-center">
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              placeholder="#"
+              className="h-10 w-14 rounded-l-xl border border-r-0 border-[color:var(--card-border)] bg-[var(--card-bg)] px-2 text-center text-sm text-[var(--app-fg)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              value={jumpInput}
+              onChange={(e) => setJumpInput(e.target.value)}
+            />
+            <button
+              type="submit"
+              className="inline-flex h-10 items-center justify-center rounded-r-xl border border-[color:var(--card-border)] bg-[var(--card-bg)] px-2 text-sm font-semibold text-[var(--app-fg)] shadow-sm hover:bg-[var(--soft-bg)]"
+            >
+              Go
+            </button>
+          </form>
+
           <button
             type="button"
             onClick={() => {
@@ -762,7 +901,7 @@ export default function QuizPage() {
           <button
             type="button"
             onClick={onPrev}
-            disabled={index <= 0}
+            disabled={index <= 0 && baseOffset === 0}
             className="inline-flex h-11 items-center justify-center rounded-xl border border-[color:var(--card-border)] bg-[var(--card-bg)] px-5 text-sm font-semibold text-[var(--app-fg)] shadow-sm hover:bg-[var(--soft-bg)] focus:outline-none focus:ring-4 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Prev
