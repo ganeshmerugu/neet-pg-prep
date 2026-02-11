@@ -18,7 +18,11 @@ import {
   saveBookmark,
   subscribeUserSubjectStats,
   upsertQuizState,
+  fetchUserBookmarks,
+  fetchSubjectQuestionMap,
+  fetchAllSubjectAttempts,
 } from "@/lib/supabaseUserDb";
+import { QuestionPalette } from "./QuestionPalette";
 
 function letter(i: number) {
   return String.fromCharCode(65 + i);
@@ -418,7 +422,7 @@ export default function QuizPage() {
         setAllAttempts(attempts);
         const bookmarkMap: Record<string, true> = {};
         for (const b of userBookmarks) {
-          bookmarkMap[b.question_id] = true;
+          bookmarkMap[b.id] = true;
         }
         setBookmarks(bookmarkMap);
       } catch (e) {
@@ -980,10 +984,10 @@ export default function QuizPage() {
         <QuestionPalette
           total={subjectTotal ?? questionMap.length}
           attempts={allAttempts}
-          bookmarks={bookmarks}
+          bookmarks={new Set(Object.keys(bookmarks))}
           questionIdMap={questionMap}
           currentIndex={baseOffset + index}
-          onJump={(idx) => {
+          onJump={(idx: number) => {
             // Check if loaded
             if (idx >= baseOffset && idx < baseOffset + questions.length) {
               setIndex(idx - baseOffset);
