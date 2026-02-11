@@ -92,6 +92,12 @@ export default function QuizPage() {
     Record<string, { selectedIndices: number[]; isCorrect: boolean }>
   >({});
 
+  // Palette State
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [questionMap, setQuestionMap] = useState<Array<{ id: string; index: number }>>([]);
+  const [allAttempts, setAllAttempts] = useState<Record<string, { isCorrect: boolean }>>({});
+  const [bookmarks, setBookmarks] = useState<Record<string, true>>({});
+
   const q = questions[index];
   const isAttempted = Boolean(q?.id && attemptedIds[q.id]);
 
@@ -141,6 +147,9 @@ export default function QuizPage() {
     setIndex(-1);
     setBaseOffset(0);
     setJumpInput("");
+    setBookmarks({}); // Clear bookmarks on subject change
+    setQuestionMap([]); // Clear question map
+    setAllAttempts({}); // Clear all attempts
   }, [subject]);
 
   useEffect(() => {
@@ -331,6 +340,7 @@ export default function QuizPage() {
         ...prev,
         [q.id]: { selectedIndices: [i], isCorrect: pickedCorrect },
       }));
+      setAllAttempts((prev) => ({ ...prev, [q.id]: { isCorrect: pickedCorrect } })); // Update for palette
 
       const rows = await fetchUserSubjectStats(user.id);
       const r = rows.find((x) => x.subject === dbSubject);
@@ -396,6 +406,25 @@ export default function QuizPage() {
         // ignore; we can still show whatever stats are available
       }
       void refresh();
+
+      try {
+        const [map, attempts, userBookmarks] = await Promise.all([
+          fetchSubjectQuestionMap(dbSubject),
+          fetchAllSubjectAttempts(user.id, dbSubject),
+          fetchUserBookmarks(user.id),
+        ]);
+        if (cancelled) return;
+        setQuestionMap(map);
+        setAllAttempts(attempts);
+        const bookmarkMap: Record<string, true> = {};
+        for (const b of userBookmarks) {
+          bookmarkMap[b.question_id] = true;
+        }
+        setBookmarks(bookmarkMap);
+      } catch (e) {
+        if (cancelled) return;
+        console.error("Failed to load palette data", e);
+      }
     })();
     const ch = subscribeUserSubjectStats(user.id, () => void refresh());
     return () => {
@@ -514,9 +543,10 @@ export default function QuizPage() {
       setAttemptDetails({});
       setAttemptedLoaded(false);
       setAttemptedEpoch((v) => v + 1);
-      setAttemptedEpoch((v) => v + 1);
       setInitialStartDone(false);
       setBaseOffset(0);
+      setAllAttempts({}); // Clear palette attempts
+      setBookmarks({}); // Clear palette bookmarks
 
       try {
         await recomputeSubjectStatsFromAttempts(user.id, dbSubject);
@@ -606,9 +636,15 @@ export default function QuizPage() {
       const already = await isBookmarked(user.id, q.id);
       if (already) {
         await removeBookmark(user.id, q.id);
+        setBookmarks((prev) => {
+          const next = { ...prev };
+          delete next[q.id];
+          return next;
+        });
         setToast({ type: "info", message: "Bookmark removed" });
       } else {
         await saveBookmark(user.id, q.id, dbSubject);
+        setBookmarks((prev) => ({ ...prev, [q.id]: true }));
         setToast({ type: "info", message: "Bookmarked" });
       }
     } catch (e: unknown) {
@@ -799,6 +835,21 @@ export default function QuizPage() {
             First Next
           </button>
 
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[color:var(--card-border)] bg-[var(--card-bg)] px-3 text-sm font-semibold text-[var(--app-fg)] shadow-sm transition active:scale-[0.98] hover:bg-[var(--soft-bg)] focus:outline-none focus:ring-4 focus:ring-[var(--ring)]"
+            title="Question Palette"
+          >
+            <div className="grid grid-cols-2 gap-0.5">
+              <div className="size-1 rounded-[1px] bg-[var(--app-fg)]" />
+              <div className="size-1 rounded-[1px] bg-[var(--app-fg)]" />
+              <div className="size-1 rounded-[1px] bg-[var(--app-fg)]" />
+              <div className="size-1 rounded-[1px] bg-[var(--app-fg)]" />
+            </div>
+            <span className="hidden sm:inline">Palette</span>
+          </button>
+
           <form onSubmit={onGoToQuestion} className="flex items-center">
             <input
               type="text"
@@ -924,6 +975,32 @@ export default function QuizPage() {
         ) : null}
 
       </div>
+
+      {paletteOpen && (
+        <QuestionPalette
+          total={subjectTotal ?? questionMap.length}
+          attempts={allAttempts}
+          bookmarks={bookmarks}
+          questionIdMap={questionMap}
+          currentIndex={baseOffset + index}
+          onJump={(idx) => {
+            // Check if loaded
+            if (idx >= baseOffset && idx < baseOffset + questions.length) {
+              setIndex(idx - baseOffset);
+            } else {
+              // Teleport
+              const offset = Math.floor(idx / 15) * 15;
+              setBaseOffset(offset);
+              setQuestions([]);
+              setAttemptedLoaded(false);
+              setIndex(idx - offset);
+              setPendingNext(true);
+            }
+            setPaletteOpen(false);
+          }}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
     </div>
   );
 }

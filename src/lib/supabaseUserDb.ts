@@ -51,6 +51,56 @@ async function fetchQuestionIdsBySubjects(subjects: string[]): Promise<string[]>
   return out;
 }
 
+export async function fetchSubjectQuestionMap(
+  subject: string,
+): Promise<Array<{ id: string; index: number }>> {
+  const supabase = requireSupabase();
+  const subjects = subjectAliases(subject);
+
+  // We need all IDs ordered by created_at desc (same as quiz pages)
+  // This allows us to map Index <-> ID
+  const { data, error } = await (supabase as any)
+    .from("questions")
+    .select("id")
+    .in("subject", subjects)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as Array<{ id: unknown }>;
+  return rows.map((r, i) => ({
+    id: String(r.id),
+    index: i,
+  }));
+}
+
+export async function fetchAllSubjectAttempts(
+  userId: string,
+  subject: string,
+): Promise<Record<string, { isCorrect: boolean }>> {
+  const supabase = requireSupabase();
+  const subjects = subjectAliases(subject);
+
+  // We need to know which questions are attempted and their result
+  const { data, error } = await (supabase as any)
+    .from("user_question_attempts")
+    .select("question_id, is_correct")
+    .eq("user_id", userId)
+    .in("subject", subjects);
+
+  if (error) throw new Error(error.message);
+
+  const out: Record<string, { isCorrect: boolean }> = {};
+  const rows = (data ?? []) as Array<{ question_id?: unknown; is_correct?: unknown }>;
+
+  for (const r of rows) {
+    if (r.question_id) {
+      out[String(r.question_id)] = { isCorrect: Boolean(r.is_correct) };
+    }
+  }
+  return out;
+}
+
 export async function recomputeSubjectStatsFromAttempts(userId: string, subject: string): Promise<{
   attempted: number;
   correct: number;
@@ -338,21 +388,29 @@ export async function resetSubjectProgress(userId: string, subject: string) {
   const supabase = requireSupabase();
   const subjects = subjectAliases(subject);
 
+  // 1. Get all question IDs for this subject
   const questionIds = await fetchQuestionIdsBySubjects(subjects);
 
   if (questionIds.length > 0) {
     const chunkSize = 1000;
     for (let i = 0; i < questionIds.length; i += chunkSize) {
       const chunk = questionIds.slice(i, i + chunkSize);
+      // Delete attempts for these questions
       const { error: attemptsByIdErr } = await (supabase as any)
         .from("user_question_attempts")
         .delete()
         .eq("user_id", userId)
         .in("question_id", chunk);
       if (attemptsByIdErr) throw new Error(attemptsByIdErr.message);
+
+      // Also delete bookmarks? Usually reset clears everything.
+      // Let's keep bookmarks for now unless requested.
+      // The user said "All progress for this topic will be lost".
     }
   }
 
+  // 2. Delete ALL attempts for subject (redundant safety catch)
+  // This ensures even if question ID fetching missed something, we wipe by subject tag
   const { error: attemptsErr } = await (supabase as any)
     .from("user_question_attempts")
     .delete()
@@ -360,6 +418,7 @@ export async function resetSubjectProgress(userId: string, subject: string) {
     .in("subject", subjects);
   if (attemptsErr) throw new Error(attemptsErr.message);
 
+  // 3. Delete stats
   const { error: statsErr } = await (supabase as any)
     .from("user_subject_stats")
     .delete()
@@ -367,6 +426,7 @@ export async function resetSubjectProgress(userId: string, subject: string) {
     .in("subject", subjects);
   if (statsErr) throw new Error(statsErr.message);
 
+  // 4. Delete quiz state (timer, current question)
   const { error: stateErr } = await (supabase as any)
     .from("user_quiz_state")
     .delete()
