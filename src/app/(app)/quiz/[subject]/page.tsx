@@ -346,6 +346,10 @@ export default function QuizPage() {
       }));
       setAllAttempts((prev) => ({ ...prev, [q.id]: { isCorrect: pickedCorrect } })); // Update for palette
 
+      // Force re-render to ensure highlighting appears immediately
+      setSelected([i]);
+      setRevealed(true);
+
       const rows = await fetchUserSubjectStats(user.id);
       const r = rows.find((x) => x.subject === dbSubject);
       const attempted = Number(r?.total ?? 0);
@@ -534,9 +538,13 @@ export default function QuizPage() {
 
     try {
       await resetSubjectProgress(user.id, dbSubject);
+
+      // Add delay to ensure database operations complete
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Clear all state
       setJumpedToQid(null);
       setResumeQid(null);
-      setHydrated(false);
       setIndex(-1);
       setSelected([]);
       setRevealed(false);
@@ -546,11 +554,13 @@ export default function QuizPage() {
       setLocalAttemptedIds({});
       setAttemptDetails({});
       setAttemptedLoaded(false);
-      setAttemptedEpoch((v) => v + 1);
       setInitialStartDone(false);
       setBaseOffset(0);
       setAllAttempts({}); // Clear palette attempts
       setBookmarks({}); // Clear palette bookmarks
+
+      // Increment epoch to trigger re-fetch of attempts
+      setAttemptedEpoch((v) => v + 1);
 
       try {
         await recomputeSubjectStatsFromAttempts(user.id, dbSubject);
@@ -566,6 +576,11 @@ export default function QuizPage() {
       setTimerRunning(false);
       setDurationSec(20 * 60);
       setRemainingSec(20 * 60);
+
+      // Re-hydrate after clearing
+      setHydrated(false);
+
+      setToast({ type: "info", message: "Exam reset successfully" });
     } catch (e: unknown) {
       setToast({ type: "error", message: errorMessage(e) });
     }
